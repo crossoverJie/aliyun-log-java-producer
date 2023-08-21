@@ -414,8 +414,8 @@ public class ProducerTest {
     AtomicInteger integer = new AtomicInteger();
     int i1 = 1000, ji = 40;
     for (int i = 0; i < i1; i++) {
-//      new Thread(
-//              () -> {
+      new Thread(
+              () -> {
                 for (int j = 0; j < ji; j++) {
                   int v = integer.incrementAndGet();
                   ListenableFuture<Result> f = null;
@@ -432,8 +432,8 @@ public class ProducerTest {
                     throw new RuntimeException(e);
                   }
                 }
-//              })
-//          .start();
+              })
+          .start();
     }
 
     TimeUnit.SECONDS.sleep(60);
