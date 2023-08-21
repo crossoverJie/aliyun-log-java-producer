@@ -9,9 +9,15 @@ import com.google.common.util.concurrent.ListenableFuture;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import okhttp3.MediaType;
+import okhttp3.Request;
+import okhttp3.RequestBody;
 import org.junit.Assert;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class ProducerTest {
 
@@ -369,5 +375,67 @@ public class ProducerTest {
     String accessKeyId = System.getenv("ACCESS_KEY_ID");
     String accessKeySecret = System.getenv("ACCESS_KEY_SECRET") + "XXX";
     return new ProjectConfig(project, endpoint, accessKeyId, accessKeySecret);
+  }
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(ProducerTest.class);
+
+  @Test
+  public void json() throws ProducerException, InterruptedException, ExecutionException {
+    ProducerConfig producerConfig = new ProducerConfig();
+    producerConfig.setSenderArgs(new String[] {"http://127.0.0.1:9200"});
+    producerConfig.setSender(
+        (batch, args) -> {
+          StringBuilder body = new StringBuilder();
+          for (String s : batch.getLogItemsString()) {
+            body.append("{\"create\":{}}");
+            body.append("\n");
+            body.append(s);
+            body.append("\n");
+          }
+          LOGGER.info("Send vlogs: " + batch.getLogItemsString().size());
+          RequestBody requestBody =
+              RequestBody.create(MediaType.parse("application/json"), body.toString());
+          Request request =
+              new Request.Builder()
+                  .url(String.format("%s/insert/elasticsearch/_bulk", args[0]))
+                  .post(requestBody)
+                  .build();
+
+          //      Response response = okHttpClient.newCall(request).execute();
+          //      if (response.isSuccessful()) {
+          //        String responseBody = response.body().string();
+          //        LOGGER.info("Response: " + responseBody);
+          //      } else {
+          //        LOGGER.error("Request failed with error code: " + response);
+          //      }
+        });
+    final Producer producer = new LogProducer(producerConfig);
+    producer.putProjectConfig(buildProjectConfig());
+    AtomicInteger integer = new AtomicInteger();
+    int i1 = 1000, ji = 40;
+    for (int i = 0; i < i1; i++) {
+//      new Thread(
+//              () -> {
+                for (int j = 0; j < ji; j++) {
+                  int v = integer.incrementAndGet();
+                  ListenableFuture<Result> f = null;
+                  try {
+                    f =
+                        producer.send(
+                            System.getenv("PROJECT"),
+                            System.getenv("LOG_STORE"),
+                            "{\"eventName\":\"abc\","
+                                + "\"apiVersion\":\"2\",\"eventId\":\"12\",\"requestParameters\":{\"2\":\"2\",\"1\":\"1\"}}");
+                    Result result = f.get();
+                    //            System.out.println(result);
+                  } catch (Exception e) {
+                    throw new RuntimeException(e);
+                  }
+                }
+//              })
+//          .start();
+    }
+
+    TimeUnit.SECONDS.sleep(60);
   }
 }

@@ -159,6 +159,12 @@ public class LogProducer implements Producer {
     return send(project, logStore, "", "", null, logItem, null);
   }
 
+  @Override
+  public ListenableFuture<Result> send(String project, String logStore, String value)
+      throws InterruptedException, ProducerException {
+    return send(project, logStore, "", "", null, value, null);
+  }
+
   /**
    * Send a list of logs asynchronously. Equivalent to <code>send(project, logStore, "", "", "",
    * logItems, null)</code>. See {@link #send(String, String, String, String, String, List,
@@ -308,6 +314,22 @@ public class LogProducer implements Producer {
     return send(project, logStore, topic, source, shardHash, logItems, callback);
   }
 
+  @Override
+  public ListenableFuture<Result> send(
+      String project,
+      String logStore,
+      String topic,
+      String source,
+      String shardHash,
+      String logItem,
+      Callback callback)
+      throws InterruptedException, ProducerException {
+    Utils.assertArgumentNotNull(logItem, "logItem");
+    List<String> logItems = new ArrayList<String>();
+    logItems.add(logItem);
+    return sendString(project, logStore, topic, source, shardHash, logItems, callback);
+  }
+
   /**
    * Asynchronously send a list of logs and invoke the provided callback when the send has been
    * acknowledged.
@@ -383,6 +405,39 @@ public class LogProducer implements Producer {
       shardHash = adjuster.adjust(shardHash);
     }
     return accumulator.append(project, logStore, topic, source, shardHash, logItems, callback);
+  }
+
+  public ListenableFuture<Result> sendString(
+      String project,
+      String logStore,
+      String topic,
+      String source,
+      String shardHash,
+      List<String> logItems,
+      Callback callback)
+      throws InterruptedException, ProducerException {
+    Utils.assertArgumentNotNullOrEmpty(project, "project");
+    Utils.assertArgumentNotNullOrEmpty(logStore, "logStore");
+    if (topic == null) {
+      topic = "";
+    }
+    Utils.assertArgumentNotNull(logItems, "logItems");
+    if (logItems.isEmpty()) {
+      throw new IllegalArgumentException("logItems cannot be empty");
+    }
+    int count = logItems.size();
+    if (count > ProducerConfig.MAX_BATCH_COUNT) {
+      throw new MaxBatchCountExceedException(
+          "the log list size is "
+              + count
+              + " which exceeds the MAX_BATCH_COUNT "
+              + ProducerConfig.MAX_BATCH_COUNT);
+    }
+    if (shardHash != null && producerConfig.isAdjustShardHash()) {
+      shardHash = adjuster.adjust(shardHash);
+    }
+    return accumulator.appendString(
+        project, logStore, topic, source, shardHash, logItems, callback);
   }
 
   /**

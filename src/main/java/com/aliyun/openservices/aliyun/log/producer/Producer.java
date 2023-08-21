@@ -16,6 +16,10 @@ public interface Producer {
   ListenableFuture<Result> send(String project, String logStore, LogItem logItem)
       throws InterruptedException, ProducerException;
 
+  /** See {@link LogProducer#send(String, String, String)} */
+  ListenableFuture<Result> send(String project, String logStore, String value)
+      throws InterruptedException, ProducerException;
+
   /** See {@link LogProducer#send(String, String, List)} */
   ListenableFuture<Result> send(String project, String logStore, List<LogItem> logItems)
       throws InterruptedException, ProducerException;
@@ -87,6 +91,16 @@ public interface Producer {
       String source,
       String shardHash,
       LogItem logItem,
+      Callback callback)
+      throws InterruptedException, ProducerException;
+
+  ListenableFuture<Result> send(
+      String project,
+      String logStore,
+      String topic,
+      String source,
+      String shardHash,
+      String value,
       Callback callback)
       throws InterruptedException, ProducerException;
 

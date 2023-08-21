@@ -28,6 +28,7 @@ public class ProducerBatch implements Delayed {
   private final int batchCountThreshold;
 
   private final List<LogItem> logItems = new ArrayList<LogItem>();
+  private final List<String> logItemsString = new ArrayList<String>();
 
   private final List<Thunk> thunks = new ArrayList<Thunk>();
 
@@ -88,6 +89,20 @@ public class ProducerBatch implements Delayed {
     }
   }
 
+  public ListenableFuture<Result> tryAppendString(
+      List<String> items, int sizeInBytes, Callback callback) {
+    if (!hasRoomFor(sizeInBytes, items.size())) {
+      return null;
+    } else {
+      SettableFuture<Result> future = SettableFuture.create();
+      logItemsString.addAll(items);
+      thunks.add(new Thunk(callback, future));
+      curBatchCount += items.size();
+      curBatchSizeInBytes += sizeInBytes;
+      return future;
+    }
+  }
+
   public void appendAttempt(Attempt attempt) {
     reservedAttempts.add(attempt);
     this.attemptCount++;
@@ -119,6 +134,10 @@ public class ProducerBatch implements Delayed {
 
   public List<LogItem> getLogItems() {
     return logItems;
+  }
+
+  public List<String> getLogItemsString() {
+    return logItemsString;
   }
 
   public long getNextRetryMs() {

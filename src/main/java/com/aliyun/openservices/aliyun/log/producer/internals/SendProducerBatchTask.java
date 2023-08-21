@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
+import okhttp3.OkHttpClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,6 +40,8 @@ public class SendProducerBatchTask implements Runnable {
 
   private final AtomicInteger batchCount;
 
+  private final OkHttpClient okHttpClient;
+
   public SendProducerBatchTask(
       ProducerBatch batch,
       ProducerConfig producerConfig,
@@ -54,12 +57,17 @@ public class SendProducerBatchTask implements Runnable {
     this.successQueue = successQueue;
     this.failureQueue = failureQueue;
     this.batchCount = batchCount;
+    this.okHttpClient = new OkHttpClient.Builder().build();
   }
 
   @Override
   public void run() {
     try {
-      sendProducerBatch(System.currentTimeMillis());
+      if (producerConfig.getSender() != null) {
+        sendCustomBatch(System.currentTimeMillis());
+      } else {
+        sendProducerBatch(System.currentTimeMillis());
+      }
     } catch (Throwable t) {
       LOGGER.error(
           "Uncaught error in send producer batch task, project="
@@ -69,6 +77,53 @@ public class SendProducerBatchTask implements Runnable {
               + ", e=",
           t);
     }
+  }
+
+  private void sendCustomBatch(long nowMs) throws InterruptedException {
+    LOGGER.trace("Prepare to send producer batch, batch={}", batch);
+    try {
+      producerConfig.getSender().send(batch, producerConfig.getSenderArgs());
+    } catch (Exception e) {
+      LOGGER.error(
+          "Failed to put logs, project="
+              + batch.getProject()
+              + ", logStore="
+              + batch.getLogStore()
+              + ", e=",
+          e);
+      Attempt attempt = buildAttempt(e, nowMs);
+      batch.appendAttempt(attempt);
+      if (meetFailureCondition(e)) {
+        LOGGER.debug("Prepare to put batch to the failure queue");
+        failureQueue.put(batch);
+      } else {
+        LOGGER.debug("Prepare to put batch to the retry queue");
+        long retryBackoffMs = calculateRetryBackoffMs();
+        LOGGER.debug("Calculate the retryBackoffMs successfully, retryBackoffMs=" + retryBackoffMs);
+        batch.setNextRetryMs(System.currentTimeMillis() + retryBackoffMs);
+        try {
+          retryQueue.put(batch);
+        } catch (IllegalStateException e1) {
+          LOGGER.error(
+              "Failed to put batch to the retry queue, project="
+                  + batch.getProject()
+                  + ", logStore="
+                  + batch.getLogStore()
+                  + ", e=",
+              e);
+          if (retryQueue.isClosed()) {
+            LOGGER.info(
+                "Prepare to put batch to the failure queue since the retry queue was closed");
+            failureQueue.put(batch);
+          }
+        }
+      }
+      return;
+    }
+    Attempt attempt = new Attempt(true, "", "", "", nowMs);
+    batch.appendAttempt(attempt);
+    successQueue.put(batch);
+    LOGGER.trace("Send producer batch successfully, batch={}", batch);
   }
 
   private void sendProducerBatch(long nowMs) throws InterruptedException {

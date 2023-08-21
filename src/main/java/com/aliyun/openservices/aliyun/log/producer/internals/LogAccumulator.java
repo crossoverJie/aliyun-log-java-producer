@@ -87,6 +87,23 @@ public final class LogAccumulator {
     }
   }
 
+  public ListenableFuture<Result> appendString(
+      String project,
+      String logStore,
+      String topic,
+      String source,
+      String shardHash,
+      List<String> logItems,
+      Callback callback)
+      throws InterruptedException, ProducerException {
+    appendsInProgress.incrementAndGet();
+    try {
+      return doAppendString(project, logStore, topic, source, shardHash, logItems, callback);
+    } finally {
+      appendsInProgress.decrementAndGet();
+    }
+  }
+
   private ListenableFuture<Result> doAppend(
       String project,
       String logStore,
@@ -130,7 +147,58 @@ public final class LogAccumulator {
       GroupKey groupKey = new GroupKey(project, logStore, topic, source, shardHash);
       ProducerBatchHolder holder = getOrCreateProducerBatchHolder(groupKey);
       synchronized (holder) {
-        return appendToHolder(groupKey, logItems, callback, sizeInBytes, holder);
+        return appendToHolder(groupKey, logItems, null, callback, sizeInBytes, holder);
+      }
+    } catch (Exception e) {
+      memoryController.release(sizeInBytes);
+      throw new ProducerException(e);
+    }
+  }
+
+  private ListenableFuture<Result> doAppendString(
+      String project,
+      String logStore,
+      String topic,
+      String source,
+      String shardHash,
+      List<String> logItems,
+      Callback callback)
+      throws InterruptedException, ProducerException {
+    if (closed) {
+      throw new IllegalStateException("cannot append after the log accumulator was closed");
+    }
+    int sizeInBytes = LogSizeCalculator.calculateString(logItems);
+    ensureValidLogSize(sizeInBytes);
+    long maxBlockMs = producerConfig.getMaxBlockMs();
+    LOGGER.trace(
+        "Prepare to acquire bytes, sizeInBytes={}, maxBlockMs={}, project={}, logStore={}",
+        sizeInBytes,
+        maxBlockMs,
+        project,
+        logStore);
+    if (maxBlockMs >= 0) {
+      boolean acquired =
+          memoryController.tryAcquire(sizeInBytes, maxBlockMs, TimeUnit.MILLISECONDS);
+      if (!acquired) {
+        LOGGER.warn(
+            "Failed to acquire memory within the configured max blocking time {} ms, "
+                + "requiredSizeInBytes={}, availableSizeInBytes={}",
+            producerConfig.getMaxBlockMs(),
+            sizeInBytes,
+            memoryController.availablePermits());
+        throw new TimeoutException(
+            "failed to acquire memory within the configured max blocking time "
+                + producerConfig.getMaxBlockMs()
+                + " ms");
+      }
+    } else {
+      memoryController.acquire(sizeInBytes);
+    }
+    try {
+      GroupKey groupKey = new GroupKey(project, logStore, topic, source, shardHash);
+      ProducerBatchHolder holder = getOrCreateProducerBatchHolder(groupKey);
+      synchronized (holder) {
+        return appendToHolder(groupKey, null, logItems, callback, sizeInBytes, holder);
       }
     } catch (Exception e) {
       memoryController.release(sizeInBytes);
@@ -141,11 +209,17 @@ public final class LogAccumulator {
   private ListenableFuture<Result> appendToHolder(
       GroupKey groupKey,
       List<LogItem> logItems,
+      List<String> logItemsString,
       Callback callback,
       int sizeInBytes,
       ProducerBatchHolder holder) {
     if (holder.producerBatch != null) {
-      ListenableFuture<Result> f = holder.producerBatch.tryAppend(logItems, sizeInBytes, callback);
+      ListenableFuture<Result> f = null;
+      if (logItemsString != null) {
+        f = holder.producerBatch.tryAppendString(logItemsString, sizeInBytes, callback);
+      } else {
+        f = holder.producerBatch.tryAppend(logItems, sizeInBytes, callback);
+      }
       if (f != null) {
         if (holder.producerBatch.isMeetSendCondition()) {
           holder.transferProducerBatch(
@@ -177,7 +251,12 @@ public final class LogAccumulator {
             producerConfig.getBatchCountThreshold(),
             producerConfig.getMaxReservedAttempts(),
             System.currentTimeMillis());
-    ListenableFuture<Result> f = holder.producerBatch.tryAppend(logItems, sizeInBytes, callback);
+    ListenableFuture<Result> f;
+    if (logItemsString != null) {
+      f = holder.producerBatch.tryAppendString(logItemsString, sizeInBytes, callback);
+    } else {
+      f = holder.producerBatch.tryAppend(logItems, sizeInBytes, callback);
+    }
     batchCount.incrementAndGet();
     if (holder.producerBatch.isMeetSendCondition()) {
       holder.transferProducerBatch(

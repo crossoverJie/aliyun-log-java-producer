@@ -26,4 +26,12 @@ public abstract class LogSizeCalculator {
     }
     return sizeInBytes;
   }
+
+  public static int calculateString(List<String> logItems) {
+    int sizeInBytes = 0;
+    for (String logItem : logItems) {
+      sizeInBytes += logItem.length();
+    }
+    return sizeInBytes;
+  }
 }

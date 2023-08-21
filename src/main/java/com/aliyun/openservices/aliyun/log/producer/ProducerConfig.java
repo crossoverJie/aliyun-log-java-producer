@@ -1,5 +1,7 @@
 package com.aliyun.openservices.aliyun.log.producer;
 
+import com.aliyun.openservices.aliyun.log.producer.internals.ProducerBatch;
+
 /**
  * Configuration for {@link LogProducer}. See each each individual set method for details about each
  * parameter.
@@ -69,6 +71,36 @@ public class ProducerConfig {
   private int buckets = DEFAULT_BUCKETS;
 
   private LogFormat logFormat = DEFAULT_LOG_FORMAT;
+
+  private CustomSender sender;
+
+  private Object[] senderArgs;
+
+  public Object[] getSenderArgs() {
+    return senderArgs;
+  }
+
+  public void setSenderArgs(Object[] senderArgs) {
+    this.senderArgs = senderArgs;
+  }
+
+  public interface CustomSender {
+    /**
+     * Custom send logic
+     *
+     * @param batch data
+     * @param args custom args
+     */
+    void send(ProducerBatch batch, Object... args) throws Exception;
+  }
+
+  public CustomSender getSender() {
+    return sender;
+  }
+
+  public void setSender(CustomSender sender) {
+    this.sender = sender;
+  }
 
   /**
    * @return The total bytes of memory the producer can use to buffer logs waiting to be sent to the
